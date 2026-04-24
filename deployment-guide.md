@@ -86,7 +86,7 @@ npm --version
 │   │   └── exts/                      # 額外擴充套件
 │   └── repo.toml
 ├── web-viewer-sample/         # NVIDIA WebRTC 前端
-└── dsx-deployment/            # 部署腳本與文件（版控目錄）
+└── usd-composer-deployment/            # 部署腳本與文件（版控目錄）
     ├── start-usd-streaming.sh
     ├── start-web-viewer.sh
     ├── deployment-guide.md
@@ -248,7 +248,7 @@ nvidia-smi --query-gpu=index,uuid,memory.used --format=csv,noheader
 ### 4.1 啟動 USD Composer Streaming 容器
 
 ```bash
-~/DSX-BP/dsx-deployment/start-usd-streaming.sh
+~/DSX-BP/usd-composer-deployment/start-usd-streaming.sh
 ```
 
 **確認啟動成功**，等待輸出出現：
@@ -270,7 +270,7 @@ ss -tlnp | grep -E '49200|8112'
 ### 4.2 啟動 Web Viewer
 
 ```bash
-~/DSX-BP/dsx-deployment/start-web-viewer.sh
+~/DSX-BP/usd-composer-deployment/start-web-viewer.sh
 ```
 
 查看 log：
@@ -320,7 +320,7 @@ sudo nerdctl stop usd-composer-streaming
 
 ```bash
 sudo nerdctl stop usd-composer-streaming 2>/dev/null || true
-~/DSX-BP/dsx-deployment/start-usd-streaming.sh
+~/DSX-BP/usd-composer-deployment/start-usd-streaming.sh
 ```
 
 ### 確認 DSX k8s 服務未受影響
@@ -356,7 +356,7 @@ tail -100 ~/DSX-BP/kit-app-template/_build/linux-x86_64/release/logs/Kit/My\ USD
 
     ```bash
     sudo nerdctl stop usd-composer-streaming 2>/dev/null || true
-    ~/DSX-BP/dsx-deployment/start-usd-streaming.sh
+    ~/DSX-BP/usd-composer-deployment/start-usd-streaming.sh
     ```
 
 ---
@@ -407,8 +407,8 @@ A：確認使用了 `--runtime=/usr/local/nvidia/toolkit/nvidia-container-runtim
 A：目前未設定 systemd service，重開機後手動執行：
 
 ```bash
-~/DSX-BP/dsx-deployment/start-usd-streaming.sh
-~/DSX-BP/dsx-deployment/start-web-viewer.sh
+~/DSX-BP/usd-composer-deployment/start-usd-streaming.sh
+~/DSX-BP/usd-composer-deployment/start-web-viewer.sh
 ```
 
 **Q：streaming 畫面沒有 GPU 渲染（黑畫面）？**
