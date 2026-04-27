@@ -381,6 +381,8 @@ Blackwell GPU（Architecture 12.x）需要 Vulkan ICD `api_version ≥ 1.4.x` �
 | `kit-app-template:/...` | Kit 執行檔、extscache、source kit 檔案全部在此 |
 | `.local/share/ov:/...` | extscache symlink 的實際資料（約 16GB） |
 | `.cache/packman:/...:ro` | packman 套件快取（唯讀即可） |
+| `dsx-content:/home/ubuntu/dsx-content:ro` | DSX 場景與資產資料（host 路徑同名映射） |
+| `dsx-content:/data/dsx-content:ro` | 與 k8s pod 相同的掛載點，方便 .kit/USD 內以 `/data/dsx-content/...` 引用 |
 
 ### extscache 與實際資料的關係
 

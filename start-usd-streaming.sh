@@ -22,6 +22,8 @@ sudo PATH=/usr/local/nvidia/toolkit:$PATH nerdctl run --rm \
   -v /home/ubuntu/DSX-BP/kit-app-template:/home/ubuntu/DSX-BP/kit-app-template \
   -v /home/ubuntu/.local/share/ov:/home/ubuntu/.local/share/ov \
   -v /home/ubuntu/.cache/packman:/home/ubuntu/.cache/packman:ro \
+  -v /home/ubuntu/dsx-content:/home/ubuntu/dsx-content:ro \
+  -v /home/ubuntu/dsx-content:/data/dsx-content:ro \
   cr.myelintek.com/dsx/dsx-kit:2.0.6 \
   /home/ubuntu/DSX-BP/kit-app-template/source/apps/my_company.my_usd_composer_streaming.kit \
   --no-window \
