@@ -86,7 +86,7 @@ npm --version
 │   │   └── exts/                      # 額外擴充套件
 │   └── repo.toml
 ├── web-viewer-sample/         # NVIDIA WebRTC 前端
-└── usd-composer-deployment/            # 部署腳本與文件（版控目錄）
+└── kit-app-deployment/            # 部署腳本與文件（版控目錄）
     ├── start-usd-streaming.sh
     ├── start-web-viewer.sh
     ├── deployment-guide.md
@@ -230,25 +230,27 @@ npm install
 
 ### 4.0 確認目標 GPU
 
-此 server 有多張 GPU，啟動前確認 DSX Blueprint 使用的 GPU index，讓 USD Composer 共用同一張卡：
+此 server 有多張 GPU，啟動前確認 DSX Blueprint 使用的 GPU，讓 USD Composer 共用同一張卡：
 
 ```bash
 # 查看各 GPU 上的程序與佔用
 nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=csv,noheader
 
-# 查 UUID → index 對應
+# 查 index ↔ UUID 對應
 nvidia-smi --query-gpu=index,uuid,memory.used --format=csv,noheader
 
 # DSX Blueprint 的 kit 程序路徑為 /app/kit/kit
-# 找到後記下其 GPU index（本環境為 GPU 3）
+# 找到後記下其 GPU UUID（本環境為 GPU 3 → GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7）
 ```
 
-將下方指令的 `NVIDIA_VISIBLE_DEVICES` 設為該 index（例如 `3`）。
+> **使用 UUID 而非 index**：當主機 GPU 數量變動或 NVIDIA device-plugin 重啟時，index 順序可能改變；UUID 永遠對應到同一塊實體卡。`start-usd-streaming.sh` 中的 `GPU_UUID` 變數即為此目的。
+
+將 `start-usd-streaming.sh` 中的 `GPU_UUID` 變數設為該 UUID。
 
 ### 4.1 啟動 USD Composer Streaming 容器
 
 ```bash
-~/DSX-BP/usd-composer-deployment/start-usd-streaming.sh
+~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
 ```
 
 **確認啟動成功**，等待輸出出現：
@@ -270,7 +272,7 @@ ss -tlnp | grep -E '49200|8112'
 ### 4.2 啟動 Web Viewer
 
 ```bash
-~/DSX-BP/usd-composer-deployment/start-web-viewer.sh
+~/DSX-BP/kit-app-deployment/start-web-viewer.sh
 ```
 
 查看 log：
@@ -320,7 +322,7 @@ sudo nerdctl stop usd-composer-streaming
 
 ```bash
 sudo nerdctl stop usd-composer-streaming 2>/dev/null || true
-~/DSX-BP/usd-composer-deployment/start-usd-streaming.sh
+~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
 ```
 
 ### 確認 DSX k8s 服務未受影響
@@ -356,7 +358,7 @@ tail -100 ~/DSX-BP/kit-app-template/_build/linux-x86_64/release/logs/Kit/My\ USD
 
     ```bash
     sudo nerdctl stop usd-composer-streaming 2>/dev/null || true
-    ~/DSX-BP/usd-composer-deployment/start-usd-streaming.sh
+    ~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
     ```
 
 ---
@@ -407,8 +409,8 @@ A：確認使用了 `--runtime=/usr/local/nvidia/toolkit/nvidia-container-runtim
 A：目前未設定 systemd service，重開機後手動執行：
 
 ```bash
-~/DSX-BP/usd-composer-deployment/start-usd-streaming.sh
-~/DSX-BP/usd-composer-deployment/start-web-viewer.sh
+~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
+~/DSX-BP/kit-app-deployment/start-web-viewer.sh
 ```
 
 **Q：streaming 畫面沒有 GPU 渲染（黑畫面）？**
@@ -421,11 +423,17 @@ grep -E '(GPU Foundation|omni.rtx|vulkan|cuda)' /tmp/usd-streaming.log | grep -i
 
 **Q：如何指定使用哪張 GPU？**
 
-A：先用 `nvidia-smi --query-compute-apps=... --format=csv,noheader` 找到 DSX Blueprint（`/app/kit/kit`）所在的 GPU index，再將 `NVIDIA_VISIBLE_DEVICES` 設為該 index，讓兩個服務共用同一張卡，不額外佔用顯卡資源。亦可指定 UUID：
+A：建議用 UUID 而非 index，避免日後 GPU 數量變動或 device-plugin 重啟造成 index 漂移。先用 `nvidia-smi --query-gpu=index,uuid --format=csv` 取得目標 UUID，再修改 `start-usd-streaming.sh` 中的 `GPU_UUID` 變數：
 
 ```bash
---env NVIDIA_VISIBLE_DEVICES=GPU-1e01282d-...
+GPU_UUID="GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7"   # 對應實體 GPU 3
 ```
+
+container 內 `NVIDIA_VISIBLE_DEVICES=${GPU_UUID}`，nvidia-container-runtime 會只注入該卡。
+
+**Q：為什麼 start script 要再用 `--/exts/.../signalPort=49200` 覆寫 port？**
+
+A：防呆。若 `my_company.my_usd_composer_streaming.kit` 內的 port 設定被誤改回預設，會撞到 k8s `dsx-stack-kit-0` 的 49100/8012。CLI 參數優先於 .kit 設定，確保兩套服務共存。
 
 **Q：web-viewer-sample 如何設定預設連線資訊？**
 
