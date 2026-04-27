@@ -9,8 +9,9 @@
 # 若需更換 GPU，請用 `nvidia-smi --query-gpu=index,uuid --format=csv` 取得目標 UUID 後替換下方值。
 
 GPU_UUID="GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7"   # GPU index 3（與 DSX Blueprint 共用）
-SIGNAL_PORT=49200                                      # 避開 k8s dsx-stack-kit-0 的 49100
-HTTP_PORT=8112                                         # 避開 k8s dsx-stack-kit-0 的 8012
+SIGNAL_PORT=49200                                      # 避開 k8s dsx-stack-kit-0 的 49100 (TCP signaling)
+HTTP_PORT=8112                                         # 避開 k8s dsx-stack-kit-0 的 8012 (HTTP API)
+STREAM_PORT=49500                                      # UDP media；避開 k8s containerPort 範圍 47995-48012 與 49000-49007
 
 sudo PATH=/usr/local/nvidia/toolkit:$PATH nerdctl run --rm \
   --name usd-composer-streaming \
@@ -31,6 +32,7 @@ sudo PATH=/usr/local/nvidia/toolkit:$PATH nerdctl run --rm \
   --ext-folder /home/ubuntu/DSX-BP/kit-app-template/_build/linux-x86_64/release/exts \
   --ext-folder /home/ubuntu/DSX-BP/kit-app-template/source/extensions \
   --/exts/"omni.kit.livestream.app"/primaryStream/signalPort=${SIGNAL_PORT} \
+  --/exts/"omni.kit.livestream.app"/primaryStream/streamPort=${STREAM_PORT} \
   --/exts/"omni.services.transport.server.http"/port=${HTTP_PORT} \
   > /tmp/usd-streaming.log 2>&1 &
 
