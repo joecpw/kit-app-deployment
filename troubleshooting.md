@@ -369,3 +369,118 @@ nvidia-smi --query-gpu=index,uuid --format=csv,noheader | grep <上面的UUID>
 nvidia-smi --query-compute-apps=pid,gpu_uuid,process_name --format=csv,noheader | grep kit
 # 預期：兩筆記錄的 gpu_uuid 相同
 ```
+
+> **更穩定的做法**：用 UUID 而非 index。`NVIDIA_VISIBLE_DEVICES=GPU-1e01282d-...`。當主機 GPU 數量變動或 NVIDIA device-plugin 重啟時，index 順序可能改變；UUID 永遠對應到同一塊實體卡。
+
+---
+
+## 問題 14：手動容器與 k8s pod 的 WebRTC UDP 媒體 port 撞（NO_PORTS_AVAILABLE）
+
+**現象**
+
+手動 `usd-composer-streaming` 已用 `signalPort=49200`，TCP 部分不衝突；但 k8s `dsx-stack-kit-0` 啟動後 livestream 持續噴：
+
+```
+[Fatal] [omni.kit.livestream.streamsdk] Configuring failed:
+  StreamSdkException 800b001e [NVST_R_ERROR_UDP_RTP_SOURCE_OPEN_FAILED_NO_PORTS_AVAILABLE]
+  Failed to bind WebRtcTransport socket.
+```
+
+**原因**
+
+`omni.kit.livestream.app.primaryStream` 有兩個 port：
+
+| 設定 | 預設值 | 用途 |
+| --- | --- | --- |
+| `signalPort` | 49100 | TCP 信令 |
+| `streamPort` | 47998 | UDP RTP 媒體 |
+
+僅覆寫 `signalPort` 不夠 — 預設 `streamPort=47998` 仍落在 k8s pod 的 containerPort 範圍 `47995-48012` 內，導致 k8s pod 的 NVST 無法綁 UDP socket。
+
+**解決方式**
+
+在 `start-usd-streaming.sh` 的 nerdctl 啟動參數加上：
+
+```bash
+--/exts/"omni.kit.livestream.app"/primaryStream/streamPort=49500 \
+```
+
+`49500` 同時避開 k8s 兩段 containerPort 範圍（`47995-48012` 與 `49000-49007`）。修改後重啟手動容器，再 `kubectl -n dsx-factory delete pod dsx-stack-kit-0` 讓 k8s pod 帶著 fresh state 重啟即可。
+
+---
+
+## 問題 15：k8s `dsx-stack-kit-0` CrashLoopBackOff（unresolvable CDI device）
+
+**現象**
+
+```
+Error: failed to create containerd task: failed to create shim task:
+OCI runtime create failed: could not apply required modification to OCI specification:
+error modifying OCI spec: failed to inject CDI devices:
+unresolvable CDI devices runtime.nvidia.com/gpu=GPU-08ee3f34-e027-2961-9dee-85f354027972: unknown
+```
+
+**原因**
+
+NVIDIA device-plugin 把一顆**實際不存在**的 GPU UUID（`08ee3f34...`）配給 pod。常見成因：
+
+- 主機 GPU 數量變動（例如硬體故障被移除一顆），但 kubelet/device-plugin 帳本沒同步
+- Node label `nvidia.com/gpu.count` 已是正確值（例如 7），但 Allocatable 仍寫 8
+- CDI registry (`/etc/cdi/nvidia.yaml`) 只列出實際 7 顆 UUID，所以「第 8 顆」被分到 pod 後 OCI runtime 找不到
+
+**診斷指令**
+
+```bash
+# 實際 GPU
+nvidia-smi --query-gpu=index,uuid,memory.used --format=csv
+
+# CDI 註冊的 UUID（應與上面一致）
+grep -E 'name: GPU-' /etc/cdi/nvidia.yaml | sort -u
+
+# kubelet/scheduler 認知的數量
+kubectl describe node ubuntu | grep -E 'Allocatable:|Allocated' -A20 | grep nvidia.com/gpu
+```
+
+**解決方式（不動 nvidia-gpu-operator）**
+
+直接在 StatefulSet 上 patch：
+
+1. 移除 `nvidia.com/gpu` resource request（不再走 device-plugin）
+2. 加環境變數 `NVIDIA_VISIBLE_DEVICES=<真實存在的 GPU UUID>`
+3. 加 `NVIDIA_DRIVER_CAPABILITIES=all`
+
+NVIDIA Container Runtime（pod spec 已有 `runtimeClassName: nvidia`）會直接根據 env 注入指定那顆 GPU。
+
+```bash
+kubectl -n dsx-factory patch statefulset dsx-stack-kit --type=strategic --patch '
+spec:
+  template:
+    spec:
+      containers:
+      - name: kit
+        env:
+        - name: NVIDIA_VISIBLE_DEVICES
+          value: GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: all
+        resources:
+          limits:
+            nvidia.com/gpu: null
+          requests:
+            nvidia.com/gpu: null
+'
+```
+
+**重要警告**
+
+此 patch **不會寫回 Helm chart**。下次 `helm upgrade dsx-stack` 會被覆蓋。要永久化需修改 chart values（建議路徑：`values.yaml` 內的 `kit.resources` 與 `kit.env`）。
+
+**根治方式（需要動 cluster 元件，非必要不做）**
+
+重啟 nvidia-device-plugin pod 讓它重新 scan：
+
+```bash
+kubectl -n nvidia-gpu-operator delete pod -l app=nvidia-device-plugin-daemonset
+```
+
+重啟期間（約 5–10 秒）node 暫時無 GPU 容量；已 attach GPU 的 pod 不會被踢，但新 GPU pod 排程會等待。
