@@ -1,0 +1,20 @@
+# 預設依檔內容自動偵測；以下顯式覆寫關鍵類型。
+* text=auto
+
+# 在 Linux 上執行的腳本一律強制 LF，避免 Windows 編輯後 scp / git checkout 帶入 CRLF
+# 造成 bash 在 line-continuation + pipe 處解析失敗。
+*.sh         text eol=lf
+*.bash       text eol=lf
+
+# 文件 / 設定檔同樣統一 LF，跨平台 diff 較乾淨
+*.md         text eol=lf
+*.yml        text eol=lf
+*.yaml       text eol=lf
+*.json       text eol=lf
+*.toml       text eol=lf
+Dockerfile*  text eol=lf
+
+# Windows 專屬腳本保留 CRLF
+*.bat        text eol=crlf
+*.cmd        text eol=crlf
+*.ps1        text eol=crlf

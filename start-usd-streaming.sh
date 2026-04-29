@@ -3,12 +3,31 @@
 # 腳本位置：~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
 #
 # 與 DSX k8s 服務共存設計：
-#   - GPU：以 UUID 鎖定 GPU 3，避免 device index 漂移（如 GPU 數量變動或 device-plugin 重啟）。
+#   - GPU：啟動時自動挑選最閒置（free memory 最高）的 GPU，並以 UUID 鎖定僅該卡可見。
+#          可用 GPU_UUID 環境變數覆寫；以 UUID 而非 index 避免 device-plugin 重啟造成 index 漂移。
 #   - Port：signaling=49200、HTTP API=8112；以 CLI 參數覆寫，即使 .kit 檔被改也不會撞到 k8s 預設 49100/8012。
-#
-# 若需更換 GPU，請用 `nvidia-smi --query-gpu=index,uuid --format=csv` 取得目標 UUID 後替換下方值。
 
-GPU_UUID="GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7"   # GPU index 3（與 DSX Blueprint 共用）
+set -e
+
+# --- 自動選擇閒置 GPU ---
+# 規則：取 nvidia-smi 回報且 free memory 最高的那張；可用環境變數 GPU_UUID 強制指定。
+if [ -z "${GPU_UUID:-}" ]; then
+  GPU_UUID=$(nvidia-smi --query-gpu=uuid,memory.used,memory.free \
+               --format=csv,noheader,nounits 2>/dev/null \
+             | awk -F', ' '{ printf "%s\t%d\t%d\n", $1, $2, $3 }' \
+             | sort -k3 -rn \
+             | awk 'NR==1 {print $1}')
+  if [ -z "$GPU_UUID" ]; then
+    echo "ERROR: nvidia-smi 無法列出任何 GPU，請檢查驅動或硬體狀態。" >&2
+    exit 1
+  fi
+  echo "[GPU] auto-selected: $GPU_UUID"
+  nvidia-smi --query-gpu=index,uuid,memory.used,memory.free,utilization.gpu \
+    --format=csv,noheader | grep "$GPU_UUID" || true
+else
+  echo "[GPU] using override from env: $GPU_UUID"
+fi
+
 SIGNAL_PORT=49200                                      # 避開 k8s dsx-stack-kit-0 的 49100 (TCP signaling)
 HTTP_PORT=8112                                         # 避開 k8s dsx-stack-kit-0 的 8012 (HTTP API)
 STREAM_PORT=49500                                      # UDP media；避開 k8s containerPort 範圍 47995-48012 與 49000-49007
