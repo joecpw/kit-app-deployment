@@ -39,7 +39,7 @@ sudo PATH=/usr/local/nvidia/toolkit:$PATH nerdctl run --rm \
   --env NVIDIA_VISIBLE_DEVICES="${GPU_UUID}" \
   --env NVIDIA_DRIVER_CAPABILITIES=all \
   --network=host \
-  -v /home/ubuntu/DSX-BP/kit-app-template:/home/ubuntu/DSX-BP/kit-app-template \
+  -v /home/ubuntu/DSX-BP:/home/ubuntu/DSX-BP \
   -v /home/ubuntu/.local/share/ov:/home/ubuntu/.local/share/ov \
   -v /home/ubuntu/.cache/packman:/home/ubuntu/.cache/packman:ro \
   -v /home/ubuntu/dsx-content:/home/ubuntu/dsx-content \

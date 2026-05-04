@@ -380,7 +380,7 @@ Blackwell GPU（Architecture 12.x）需要 Vulkan ICD `api_version ≥ 1.4.x` �
 
 | Mount | 用途 |
 | --- | --- |
-| `kit-app-template:/...` | Kit 執行檔、extscache、source kit 檔案全部在此 |
+| `DSX-BP:/home/ubuntu/DSX-BP` | 整個 DSX-BP 專案根（含 kit-app-template、web-viewer-sample、kit-app-deployment 與專案內 USD 場景／文件），讓 USD Composer 可直接以 `/home/ubuntu/DSX-BP/...` 開啟任何檔案（rw） |
 | `.local/share/ov:/...` | extscache symlink 的實際資料（約 16GB） |
 | `.cache/packman:/...:ro` | packman 套件快取（唯讀即可） |
 | `dsx-content:/home/ubuntu/dsx-content` | DSX 場景與資產資料（host 路徑同名映射，rw — 容器內 USD Composer 可 Save 新檔） |
