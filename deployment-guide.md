@@ -28,7 +28,7 @@
 [usd-composer-streaming container]
     ↑  kit binary + streaming extensions
     ↓
-[NVIDIA GPU via nvidia-container-runtime]  ← 與 dsx-stack-kit-0 共用 GPU 3
+[NVIDIA GPU via nvidia-container-runtime]  ← 啟動時自動挑選最閒置 GPU（可用 GPU_UUID 環境變數覆寫）
 
 現有服務（不可影響）：
   DSX BP Web (vite dev)  → port 8081           （主機直接執行，非 k8s）
@@ -230,24 +230,38 @@ npm install
 
 ## 四、啟動 Streaming 服務
 
-### 4.0 確認目標 GPU
+### 4.0 GPU 選擇策略（預設自動）
 
-此 server 有多張 GPU，啟動前確認 DSX Blueprint 使用的 GPU，讓 USD Composer 共用同一張卡：
+`start-usd-streaming.sh` **預設會自動挑選 free memory 最高的 GPU** 並以 UUID 鎖定，多數情況不需手動指定。啟動時會印出實際選到的 UUID，例如：
 
-```bash
-# 查看各 GPU 上的程序與佔用
-nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=csv,noheader
-
-# 查 index ↔ UUID 對應
-nvidia-smi --query-gpu=index,uuid,memory.used --format=csv,noheader
-
-# DSX Blueprint 的 kit 程序路徑為 /app/kit/kit
-# 找到後記下其 GPU UUID（本環境為 GPU 3 → GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7）
+```
+[GPU] auto-selected: GPU-dcd67700-310b-3157-29c8-d94bfac9d133
+1, GPU-dcd67700-310b-3157-29c8-d94bfac9d133, 0 MiB, 97253 MiB, 0 %
 ```
 
-> **使用 UUID 而非 index**：當主機 GPU 數量變動或 NVIDIA device-plugin 重啟時，index 順序可能改變；UUID 永遠對應到同一塊實體卡。`start-usd-streaming.sh` 中的 `GPU_UUID` 變數即為此目的。
+**何時需要手動覆寫**：
 
-將 `start-usd-streaming.sh` 中的 `GPU_UUID` 變數設為該 UUID。
+- 想讓 USD Composer 與 `dsx-stack-kit-0` 共用同一張卡（節省 VRAM）
+- 想避開正在跑訓練 / 推論的 GPU
+- 多人測試時固定一張 GPU 方便除錯
+
+**覆寫方式**（用環境變數，不用改腳本）：
+
+```bash
+# 1. 先用 nvidia-smi 取得目標 UUID
+nvidia-smi --query-gpu=index,uuid,memory.used,memory.free --format=csv,noheader
+
+# 2. 啟動時透過環境變數覆寫
+GPU_UUID="GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7" \
+  ~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
+
+# 啟動 log 會顯示：
+# [GPU] using override from env: GPU-1e01282d-...
+```
+
+> **為什麼用 UUID 而非 index**：當主機 GPU 數量變動或 NVIDIA device-plugin 重啟時，index 順序可能改變；UUID 永遠對應到同一塊實體卡。
+
+> **觀察 DSX Blueprint 跑在哪張卡**：`nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=csv,noheader`，DSX Blueprint 的 kit 程序路徑為 `/app/kit/kit`。
 
 ### 4.1 啟動 USD Composer Streaming 容器
 
@@ -427,13 +441,18 @@ grep -E '(GPU Foundation|omni.rtx|vulkan|cuda)' /tmp/usd-streaming.log | grep -i
 
 **Q：如何指定使用哪張 GPU？**
 
-A：建議用 UUID 而非 index，避免日後 GPU 數量變動或 device-plugin 重啟造成 index 漂移。先用 `nvidia-smi --query-gpu=index,uuid --format=csv` 取得目標 UUID，再修改 `start-usd-streaming.sh` 中的 `GPU_UUID` 變數：
+A：預設**自動挑選 free memory 最高的 GPU**（見 4.0 節）。要覆寫請用環境變數而非改腳本：
 
 ```bash
-GPU_UUID="GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7"   # 對應實體 GPU 3
+# 先用 nvidia-smi 取得目標 UUID
+nvidia-smi --query-gpu=index,uuid,memory.free --format=csv,noheader
+
+# 啟動時 inline override
+GPU_UUID="GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7" \
+  ~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
 ```
 
-container 內 `NVIDIA_VISIBLE_DEVICES=${GPU_UUID}`，nvidia-container-runtime 會只注入該卡。
+腳本會把 `NVIDIA_VISIBLE_DEVICES=${GPU_UUID}` 傳進 container，nvidia-container-runtime 只會注入該卡。一律用 UUID 而非 index，避免日後 GPU 數量變動或 device-plugin 重啟造成 index 漂移。
 
 **Q：為什麼 start script 要再用 `--/exts/.../signalPort=49200` 覆寫 port？**
 

@@ -348,19 +348,31 @@ nohup npm run dev -- --host 0.0.0.0 --port 8082 > /tmp/web-viewer.log 2>&1 &
 
 `NVIDIA_VISIBLE_DEVICES=all` 讓 nvidia-container-runtime 將所有 GPU 全部注入容器，Kit 在初始化時會在每張可見的 GPU 上建立渲染 context。
 
-**解決方式**
+**目前解決方式（已內建於 `start-usd-streaming.sh`）**
 
-啟動前先確認 DSX Blueprint 使用的 GPU index，讓 USD Composer 共用同一張卡：
+腳本啟動時自動執行：
+
+1. 用 `nvidia-smi --query-gpu=uuid,memory.used,memory.free` 列出所有 GPU
+2. 取 free memory 最高的那張 UUID
+3. 以 `NVIDIA_VISIBLE_DEVICES=<該 UUID>` 啟動 container，只注入這張卡
+
+啟動 log 會明確顯示選到哪張：
+
+```
+[GPU] auto-selected: GPU-dcd67700-310b-3157-29c8-d94bfac9d133
+1, GPU-dcd67700-310b-3157-29c8-d94bfac9d133, 0 MiB, 97253 MiB, 0 %
+```
+
+要覆寫成特定卡（例如想跟 DSX Blueprint 共用同一張）：
 
 ```bash
-# 1. 找出 DSX Blueprint 的 GPU（程序名為 /app/kit/kit）
+# 1. 找出 DSX Blueprint 的 GPU UUID（程序名為 /app/kit/kit）
 nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory,process_name --format=csv,noheader
 
-# 2. 將 UUID 對應到 index
-nvidia-smi --query-gpu=index,uuid --format=csv,noheader | grep <上面的UUID>
-
-# 3. 啟動時指定該 index（本環境 DSX Blueprint 在 GPU 3）
---env NVIDIA_VISIBLE_DEVICES=3
+# 2. 啟動時 inline override
+GPU_UUID="GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7" \
+  ~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
+# 啟動 log 會顯示：[GPU] using override from env: GPU-1e01282d-...
 ```
 
 確認兩個 kit 程序共用同一張卡：
@@ -370,7 +382,7 @@ nvidia-smi --query-compute-apps=pid,gpu_uuid,process_name --format=csv,noheader 
 # 預期：兩筆記錄的 gpu_uuid 相同
 ```
 
-> **更穩定的做法**：用 UUID 而非 index。`NVIDIA_VISIBLE_DEVICES=GPU-1e01282d-...`。當主機 GPU 數量變動或 NVIDIA device-plugin 重啟時，index 順序可能改變；UUID 永遠對應到同一塊實體卡。
+> **一律用 UUID 而非 index**。當主機 GPU 數量變動或 NVIDIA device-plugin 重啟時，index 順序可能改變；UUID 永遠對應到同一塊實體卡。
 
 ---
 
