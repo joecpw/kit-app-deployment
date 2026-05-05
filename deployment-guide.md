@@ -397,10 +397,15 @@ Blackwell GPU（Architecture 12.x）需要 Vulkan ICD `api_version ≥ 1.4.x` �
 | `DSX-BP:/home/ubuntu/DSX-BP` | 整個 DSX-BP 專案根（含 kit-app-template、web-viewer-sample、kit-app-deployment 與專案內 USD 場景／文件），讓 USD Composer 可直接以 `/home/ubuntu/DSX-BP/...` 開啟任何檔案（rw） |
 | `.local/share/ov:/...` | extscache symlink 的實際資料（約 16GB） |
 | `.cache/packman:/...:ro` | packman 套件快取（唯讀即可） |
-| `/mnt/data/dsx-content:/home/ubuntu/dsx-content` | DSX 場景與資產資料（host 真實路徑在 `/mnt/data` 大容量碟；container 內仍以 `/home/ubuntu/dsx-content` 暴露，所有舊絕對路徑引用維持有效，rw） |
-| `/mnt/data/dsx-content:/data/dsx-content` | 與 k8s pod 相同的容器內掛載點，方便 .kit/USD 內以 `/data/dsx-content/...` 引用（rw） |
+| `/mnt/data/dsx-content:/mnt/data/dsx-content` | DSX 大型 dataset（90 GB，DSX_BP/、Datacenter_NVD/、GB300/...）真實位置；container 內以同名路徑直接暴露，使用者可瀏覽 `/mnt/data/dsx-content/...` 開啟檔案（rw） |
+| `/mnt/data/dsx-content:/data/dsx-content` | 與 k8s pod 慣例對齊，container 內 `.kit` / USD 既有絕對路徑 `/data/dsx-content/...` 仍可解析到大型 dataset（rw） |
+| `/home/ubuntu/dsx-content:/home/ubuntu/dsx-content` | 客製 / 在地內容（如 `AIF_DT/`），保留在 root volume，跟搬到大碟的 dataset 分開（rw） |
 
-> **關於 host 路徑**：歷史上 dsx-content 放在 `/home/ubuntu/dsx-content`（root volume），但 90 GB 資產讓 root 接近滿載。已搬到 `/mnt/data/dsx-content`（datalv 1.5 TB）。為了 k8s `dsx-stack-kit-0` 與所有舊路徑引用不壞，host 上保留 `/home/ubuntu/dsx-content` 作為 symlink → `/mnt/data/dsx-content`。詳見「附錄：dsx-content 從 root 搬到 /mnt/data 的步驟」。
+> **關於 host 路徑分工**：
+> - 大型 read-only NVIDIA dataset（DSX_BP、Datacenter_NVD 等）放 `/mnt/data/dsx-content`（datalv 1.5 TB）
+> - 小型可寫客製內容（AIF_DT 等）留在 `/home/ubuntu/dsx-content`（root volume）
+> - 兩條路在 container 內用各自原生路徑暴露，**不做 symlink**，避免混淆檔案來源
+> - k8s `dsx-stack-kit-0` 同步把 hostPath 改為 `/mnt/data/dsx-content/DSX_BP`，與此處對齊
 
 ### extscache 與實際資料的關係
 
@@ -501,117 +506,65 @@ A：編輯 `~/DSX-BP/web-viewer-sample/stream.config.json`，將 `server` 和 `s
 
 ---
 
-## 附錄：dsx-content 從 root 搬到 /mnt/data 的步驟
+## 附錄：dsx-content 路徑分工調整
 
-90 GB 數位資產原本放 `/home/ubuntu/dsx-content`（root volume，總 252 GB），逼近滿載；移至 `/mnt/data/dsx-content`（datalv，1.5 TB），舊路徑改為 symlink 維持向後相容。
+90 GB NVIDIA dataset 從 `/home/ubuntu/dsx-content`（root volume 252 GB）搬到 `/mnt/data/dsx-content`（datalv 1.5 TB）。**不做 symlink**，兩個位置在 container 內用各自原生路徑分別暴露：
 
-### 前置確認
+| 位置 | 內容 | 大小 | 寫入特性 |
+| --- | --- | --- | --- |
+| `/mnt/data/dsx-content` | NVIDIA 大型 read-only dataset：`DSX_BP/`、`Datacenter_NVD/`、`GB300/`、`GB300_cooling/`、`GB300_power/` | ~90 GB | 視為 immutable |
+| `/home/ubuntu/dsx-content` | 客製 / 在地內容：`AIF_DT/` 與其他 user-authored 資料 | 小（< 100 MB 量級） | rw |
 
-```bash
-# 1. 目標磁碟有足夠空間（需 > 90 GB）
-df -h /mnt/data
+### 對應的服務變更
 
-# 2. 找出所有依賴 dsx-content 的服務
-sudo lsof +D /home/ubuntu/dsx-content 2>/dev/null | head
-kubectl -n dsx-factory get pod -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.volumes[?(@.hostPath.path=="/home/ubuntu/dsx-content")].name}{"\n"}{end}'
+**USD Composer streaming container**（本 repo 的 `start-usd-streaming.sh`）：三條 mount，兩個位置都暴露給 container 同名路徑（見上方 Volume Mount 表）。
+
+**k8s `dsx-stack-kit-0`**（gcai-dsx 的 `dsx-live-values.yaml`）：
+```yaml
+extraVolumeMounts:
+  - name: dsx-content
+    mountPath: /data/dsx-content/DSX_BP   # 從 /data/dsx-content 改成 DSX_BP 子層
+    readOnly: true
+extraVolumes:
+  - name: dsx-content
+    hostPath:
+      path: /mnt/data/dsx-content/DSX_BP  # 從 /home/ubuntu/dsx-content 改成 /mnt/data/.../DSX_BP
+      type: Directory
 ```
 
-預期會看到 `dsx-stack-kit-0` 與本地 `usd-composer-streaming` container 兩處在用。
+`kitArgs` 裡的 `--/app/auto_load_usd=/data/dsx-content/DSX_BP/Assembly/DSX_Main_BP.usda` 不變。
 
-### 一、停掉所有依賴服務
+### 套用步驟（資料已搬完的情境）
 
-```bash
-# 停 USD Composer streaming container
-sudo nerdctl stop usd-composer-streaming 2>/dev/null
-sudo nerdctl rm   usd-composer-streaming 2>/dev/null
-
-# 停 k8s pod（讓它釋放檔案 handle；StatefulSet 會自動重建，但等 symlink 建好再重建）
-kubectl -n dsx-factory scale statefulset dsx-stack-kit --replicas=0
-kubectl -n dsx-factory wait --for=delete pod/dsx-stack-kit-0 --timeout=60s
-
-# 確認沒有 process 還持有 dsx-content
-sudo lsof +D /home/ubuntu/dsx-content 2>/dev/null | head
-```
-
-### 二、搬資料（rsync 兩階段，安全可中斷）
-
-跨 mount point 是真實複製（不是 inode rename），90 GB 在 SSD 約 5–10 分鐘：
+如果資料已經自行用 `mv` / `rsync` 搬到 `/mnt/data/dsx-content`：
 
 ```bash
-# 第一階段：完整複製（複製過程中舊位置資料保持不動，可隨時 Ctrl-C 重跑）
-sudo rsync -aHAX --info=progress2 /home/ubuntu/dsx-content/ /mnt/data/dsx-content/
-
-# 驗證大小相符
-du -sh /home/ubuntu/dsx-content /mnt/data/dsx-content
-
-# 第二階段：補差異（如果 services 已停就不會有差異，但保險起見再跑一次）
-sudo rsync -aHAX --delete /home/ubuntu/dsx-content/ /mnt/data/dsx-content/
-```
-
-### 三、舊路徑改為 symlink
-
-```bash
-# 把舊位置 rename 為 backup（不直接刪，留一晚再回收）
-sudo mv /home/ubuntu/dsx-content /home/ubuntu/dsx-content.old
-
-# 建立 symlink（k8s pod 與所有舊路徑引用都會跟著走）
-sudo ln -s /mnt/data/dsx-content /home/ubuntu/dsx-content
-sudo chown -h ubuntu:ubuntu /home/ubuntu/dsx-content
-
-# 驗證
-ls -ld /home/ubuntu/dsx-content
-# 預期：lrwxrwxrwx ... /home/ubuntu/dsx-content -> /mnt/data/dsx-content
-
-ls /home/ubuntu/dsx-content/ | head      # 應看到內容（透過 symlink）
-```
-
-### 四、重啟服務
-
-```bash
-# 拉最新腳本（已將 mount source 改為 /mnt/data/dsx-content）
+# 1. 拉最新 kit-app-deployment 腳本
 cd ~/DSX-BP/kit-app-deployment && git pull --ff-only
 
-# 啟動 USD Composer streaming container
+# 2. 重啟 USD Composer streaming container
+sudo nerdctl stop usd-composer-streaming 2>/dev/null
+sudo nerdctl rm   usd-composer-streaming 2>/dev/null
 ~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
-tail -f /tmp/usd-streaming.log     # 等到出現 "app ready"
+tail -f /tmp/usd-streaming.log     # 等 "app ready"
 
-# 重新啟動 k8s pod
-kubectl -n dsx-factory scale statefulset dsx-stack-kit --replicas=1
+# 3. 更新 dsx-live-values.yaml 並 helm upgrade
+cd ~/DSX-BP/gcai-dsx
+# 編輯 dsx-live-values.yaml 把 extraVolumes / extraVolumeMounts 改為上述新路徑
+helm upgrade dsx-stack /home/ubuntu/DSX-BP/omniverse-dsx-blueprint-for-ai-factories/helm/dsx \
+  -n dsx-factory -f dsx-live-values.yaml
 kubectl -n dsx-factory wait --for=condition=Ready pod/dsx-stack-kit-0 --timeout=180s
 ```
 
-### 五、驗證
+### 驗證
 
 ```bash
-# Container 內看 dsx-content 應該還能讀到資料
-sudo nerdctl exec usd-composer-streaming ls /home/ubuntu/dsx-content/ | head
-sudo nerdctl exec usd-composer-streaming ls /data/dsx-content/ | head
+# USD Composer container 看到 3 個位置
+sudo nerdctl exec usd-composer-streaming ls /mnt/data/dsx-content/  | head
+sudo nerdctl exec usd-composer-streaming ls /data/dsx-content/      | head
+sudo nerdctl exec usd-composer-streaming ls /home/ubuntu/dsx-content/
 
-# k8s pod 看 dsx-content 也應正常
-kubectl -n dsx-factory exec dsx-stack-kit-0 -- ls /home/ubuntu/dsx-content/ | head
-
-# root volume 已釋放
-df -h /
-```
-
-### 六、回收 backup（觀察 1–2 天無問題後）
-
-```bash
-sudo rm -rf /home/ubuntu/dsx-content.old
-df -h /     # root 應該多出 90 GB
-```
-
-### 回滾（萬一搬完發現問題）
-
-```bash
-# 把 symlink 拿掉，把 backup 名稱還原
-sudo rm /home/ubuntu/dsx-content
-sudo mv /home/ubuntu/dsx-content.old /home/ubuntu/dsx-content
-
-# 把腳本回退一個 commit
-cd ~/DSX-BP/kit-app-deployment && git checkout HEAD~1 -- start-usd-streaming.sh
-
-# 重啟服務
-~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
-kubectl -n dsx-factory scale statefulset dsx-stack-kit --replicas=1
+# k8s pod 看到 DSX_BP 內容
+kubectl -n dsx-factory exec dsx-stack-kit-0 -- ls /data/dsx-content/DSX_BP/ | head
+curl -s http://192.168.5.100:8012/api/agent/health | python3 -m json.tool
 ```
