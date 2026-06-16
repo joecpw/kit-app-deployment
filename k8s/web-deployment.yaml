@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: usd-composer-web
+  namespace: aif-usd-composer
+  labels:
+    app: usd-composer-web
+    app.kubernetes.io/part-of: aif-usd-composer
+spec:
+  replicas: 1
+  # Recreate: hostNetwork pod binds host port 8082; two would collide.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: usd-composer-web
+  template:
+    metadata:
+      labels:
+        app: usd-composer-web
+        app.kubernetes.io/part-of: aif-usd-composer
+    spec:
+      # hostNetwork so the vite dev server binds the host's 8082 directly
+      # (mirrors the old systemd usd-composer-webviewer; browser hits
+      # http://192.168.5.100:8082). It connects to the kit signaling at
+      # 192.168.5.100:49200 via stream.config.json (unchanged).
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      automountServiceAccountToken: false
+      # web-viewer-sample (incl. node_modules) is ubuntu:ubuntu (uid 1000); run
+      # as 1000 so vite can read deps + write its .vite cache in the hostPath.
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          # node:20-slim is Debian (glibc) — REQUIRED: the host installed node_modules
+          # with the glibc rollup/esbuild native binaries (@rollup/rollup-linux-x64-gnu),
+          # so an Alpine/musl image (aif-dt-web, dsx-web) crashes with
+          # "Cannot find module @rollup/rollup-linux-x64-musl". Pulled once into the
+          # k8s.io containerd namespace; IfNotPresent then resolves locally.
+          image: docker.io/library/node:20-slim
+          imagePullPolicy: IfNotPresent
+          workingDir: /home/ubuntu/DSX-BP/web-viewer-sample
+          command: ["npm"]
+          args: ["run", "dev", "--", "--host", "0.0.0.0", "--port", "8082"]
+          env:
+            # give npm/vite a writable HOME (container fs, not the hostPath project)
+            - name: HOME
+              value: /tmp
+          ports:
+            - containerPort: 8082
+              name: http
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: web-viewer-sample
+              mountPath: /home/ubuntu/DSX-BP/web-viewer-sample
+      volumes:
+        - name: web-viewer-sample
+          hostPath:
+            path: /home/ubuntu/DSX-BP/web-viewer-sample
+            type: Directory
