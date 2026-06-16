@@ -1,0 +1,26 @@
+[Unit]
+Description=USD Composer Streaming (kit container, transitional manual deploy)
+Documentation=file:/home/ubuntu/DSX-BP/kit-app-deployment/deployment-guide.md
+After=containerd.service network-online.target
+Wants=network-online.target
+Requires=containerd.service
+
+[Service]
+Type=simple
+# nvidia toolkit first so nerdctl picks the right runtime; include /usr/local/bin for nerdctl
+Environment=PATH=/usr/local/nvidia/toolkit:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Clean up any leftover container with the same name before (re)starting (- = ignore failure)
+ExecStartPre=-/usr/local/bin/nerdctl rm -f usd-composer-streaming
+ExecStart=/home/ubuntu/DSX-BP/kit-app-deployment/run-usd-streaming.sh
+ExecStop=/usr/local/bin/nerdctl stop usd-composer-streaming
+Restart=always
+RestartSec=10
+# RTX shader compile can take ~60-200s; generous start timeout
+TimeoutStartSec=600
+# stdout/stderr go to journald (read with: journalctl -u usd-composer-streaming -f)
+# kit's own detailed logs remain on disk under _build/.../logs/Kit/
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

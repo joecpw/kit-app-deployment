@@ -312,6 +312,42 @@ tail -f /tmp/web-viewer.log
 
 ## 六、維運操作
 
+> **服務現由 systemd 管理（2026-06-16 起）**：`usd-composer-streaming.service`（kit 容器）+ `usd-composer-webviewer.service`（web viewer）已 `enable`，**開機會自動啟動、crash 會自動重啟**，根治「重開機後服務消失」。手動 `start-*.sh` / `setsid` 方式保留作 ad-hoc 用途，但日常維運請優先用 systemd。
+>
+> 註：此為**過渡方案**。最終目標是把 usd composer 比照 `aif-dt-factory` 重打包成 k8s 服務（namespace `aif-usd-composer`），屆時 systemd unit 會 disable 退役。
+
+### systemd 管理（主要方式）
+
+```bash
+# 狀態
+sudo systemctl status usd-composer-streaming usd-composer-webviewer
+
+# 重啟（ExecStartPre 會先清殘留容器再起，~50-60s 到 RTX ready）
+sudo systemctl restart usd-composer-streaming
+sudo systemctl restart usd-composer-webviewer
+
+# 停止 / 啟動
+sudo systemctl stop  usd-composer-streaming usd-composer-webviewer
+sudo systemctl start usd-composer-streaming usd-composer-webviewer
+
+# 看 log（取代背景版的 /tmp/usd-streaming.log）
+sudo journalctl -u usd-composer-streaming -f
+sudo journalctl -u usd-composer-webviewer -f
+
+# 確認開機會自動起（兩個都應為 enabled）
+sudo systemctl is-enabled usd-composer-streaming usd-composer-webviewer
+```
+
+Unit 與 foreground wrapper（版控於本 repo）：
+
+| 檔案 | 用途 |
+| --- | --- |
+| `systemd/usd-composer-streaming.service` → `run-usd-streaming.sh` | kit 容器；foreground 版 `start-usd-streaming.sh`（含 kit-cae ext-folder + 自動挑最閒 GPU）；`Restart=always`、`After=containerd`、`ExecStartPre` 清殘留 |
+| `systemd/usd-composer-webviewer.service` → `run-web-viewer.sh` | vite web viewer（`User=ubuntu`，port 8082）|
+| `systemd/install-systemd.sh` | 安裝/重裝 installer：`sudo bash systemd/install-systemd.sh`（idempotent）|
+
+> **stdout 走 journald**（不是 `/tmp/usd-streaming.log`）。原因：systemd 255 用 `StandardOutput=append:` 開既有 `ubuntu:ubuntu` 擁有的 `/tmp/*.log` 會 `Permission denied`（連 root 服務都被擋），故改 journald。kit 自己的詳細 log 仍在 `_build/.../logs/Kit/`。
+
 ### 查看容器狀態
 
 ```bash
@@ -334,10 +370,12 @@ sudo nerdctl logs -f usd-composer-streaming
 sudo nerdctl stop usd-composer-streaming
 ```
 
-### 重啟 Streaming
+### 重啟 Streaming（手動 ad-hoc fallback；日常請用上面的 `systemctl restart`）
 
 ```bash
-sudo nerdctl stop usd-composer-streaming 2>/dev/null || true
+# 僅在刻意不走 systemd 時用；會與 systemd 版搶 name/port，務必先停 systemd
+sudo systemctl stop usd-composer-streaming 2>/dev/null || true
+sudo nerdctl rm -f usd-composer-streaming 2>/dev/null || true
 ~/DSX-BP/kit-app-deployment/start-usd-streaming.sh
 ```
 
@@ -431,7 +469,9 @@ A：確認使用了 `--runtime=/usr/local/nvidia/toolkit/nvidia-container-runtim
 
 **Q：重開機後服務消失？**
 
-A：目前未設定 systemd service，重開機後手動執行：
+A：**已於 2026-06-16 用 systemd 解決** — `usd-composer-streaming.service` + `usd-composer-webviewer.service` 已 `enable`，重開機會自動啟動、crash 也自動重啟，不需再手動拉起。詳見「六、維運操作」的 systemd 段。
+
+若 systemd unit 被移除、需要手動拉起（ad-hoc fallback）：
 
 ```bash
 ~/DSX-BP/kit-app-deployment/start-usd-streaming.sh

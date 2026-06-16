@@ -1,0 +1,21 @@
+[Unit]
+Description=USD Composer Web Viewer (vite dev server, port 8082)
+Documentation=file:/home/ubuntu/DSX-BP/kit-app-deployment/deployment-guide.md
+After=network-online.target usd-composer-streaming.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/DSX-BP/web-viewer-sample
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/ubuntu/DSX-BP/kit-app-deployment/run-web-viewer.sh
+Restart=always
+RestartSec=10
+# stdout/stderr go to journald (read with: journalctl -u usd-composer-webviewer -f)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
