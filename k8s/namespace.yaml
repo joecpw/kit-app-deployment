@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aif-usd-composer
+  labels:
+    app.kubernetes.io/part-of: aif-usd-composer
+    # Isolated namespace for the USD Composer streaming kit (migrated off the
+    # manual nerdctl + systemd deploy). Mirrors the aif-dt-factory pattern.

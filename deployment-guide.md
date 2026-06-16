@@ -1,5 +1,7 @@
 # USD Composer Streaming — 完整部署與維運指南
 
+> **⚠️ 2026-06-16：服務已遷移至 Kubernetes。** kit 現由 k8s Deployment 託管（namespace `aif-usd-composer`，自癒 + 開機自起），單一真相見 **[`K8S_DEPLOYMENT.md`](K8S_DEPLOYMENT.md)**。本文件保留：web viewer 維運、手動/systemd 啟動（緊急 rollback 用）、首次 build 流程與技術背景。
+
 > **環境規格**
 >
 > Server IP：`192.168.5.100`

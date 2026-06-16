@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: usd-composer-kit
+  namespace: aif-usd-composer
+  labels:
+    app: usd-composer-kit
+    app.kubernetes.io/part-of: aif-usd-composer
+spec:
+  replicas: 1
+  # Recreate (not RollingUpdate): two kit pods would fight over the same host
+  # ports (hostNetwork) and the same pinned GPU UUID.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: usd-composer-kit
+  template:
+    metadata:
+      labels:
+        app: usd-composer-kit
+        app.kubernetes.io/part-of: aif-usd-composer
+    spec:
+      # mirror aif-dt-stack-kit: host networking so the WebRTC SDK advertises the
+      # real host IP (pod-internal net + hostPort broke the SDP offer for dsx/aif-dt).
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # GPU via NVIDIA Container Runtime + env UUID (NOT nvidia.com/gpu request) to
+      # avoid the device-plugin phantom-UUID CrashLoop and the dual-injection bug.
+      runtimeClassName: nvidia
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
+      # extscache / build artifacts / dsx-content are all ubuntu:ubuntu (uid 1000)
+      # on the host, so the pod runs as 1000 to read/write the hostPath mounts.
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kit
+          # Already present in the k8s.io containerd namespace (dsx-factory/dsx-stack-kit-0
+          # runs the same image), so IfNotPresent resolves locally without a registry pull.
+          image: cr.myelintek.com/dsx/dsx-kit:2.0.6
+          imagePullPolicy: IfNotPresent
+          # Override the image entrypoint (which auto-starts DSX's own app) with the
+          # host-built kit binary — the k8s equivalent of nerdctl --entrypoint.
+          command:
+            - /home/ubuntu/DSX-BP/kit-app-template/_build/linux-x86_64/release/kit/kit
+          args:
+            - /home/ubuntu/DSX-BP/kit-app-template/source/apps/my_company.my_usd_composer_streaming.kit
+            - --no-window
+            - --portable-root
+            - /home/ubuntu/DSX-BP/kit-app-template/_build/linux-x86_64/release
+            - --ext-folder
+            - /home/ubuntu/DSX-BP/kit-app-template/_build/linux-x86_64/release/exts
+            - --ext-folder
+            - /home/ubuntu/DSX-BP/kit-app-template/source/extensions
+            - --ext-folder
+            - /home/ubuntu/DSX-BP/kit-cae/_build/linux-x86_64/release/exts
+            - --ext-folder
+            - /home/ubuntu/DSX-BP/kit-cae/_build/linux-x86_64/release/apps
+            # --- FINAL PORTS (cut over from the systemd version 2026-06-16) ---
+            # Same ports the manual/systemd deploy used; systemd version stopped to free them.
+            - --/exts/omni.kit.livestream.app/primaryStream/signalPort=49200
+            - --/exts/omni.kit.livestream.app/primaryStream/streamPort=49500
+            - --/exts/omni.services.transport.server.http/port=8112
+          env:
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: GPU-1e01282d-1e27-4ea3-7e1f-584762ed1ad7   # GPU index 3 (idle); re-pick if hardware changes
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: all
+          ports:
+            - containerPort: 49200
+              name: signaling
+              protocol: TCP
+            - containerPort: 49500
+              name: media
+              protocol: UDP
+            - containerPort: 8112
+              name: control
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "2"
+              memory: 16Gi
+              ephemeral-storage: 1Gi
+            limits:
+              cpu: "8"
+              memory: 64Gi
+              ephemeral-storage: 4Gi
+          # TCP probe on signaling; startup allows ~20 min for first shader compile.
+          startupProbe:
+            tcpSocket:
+              port: signaling
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 80
+          livenessProbe:
+            tcpSocket:
+              port: signaling
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            tcpSocket:
+              port: signaling
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 10
+          volumeMounts:
+            - name: dsx-bp
+              mountPath: /home/ubuntu/DSX-BP
+            - name: ov-local-share
+              mountPath: /home/ubuntu/.local/share/ov
+            - name: packman-cache
+              mountPath: /home/ubuntu/.cache/packman
+              readOnly: true
+            # one host source, two container targets (kit/.kit reference both paths)
+            - name: dsx-content
+              mountPath: /mnt/data/dsx-content
+            - name: dsx-content
+              mountPath: /data/dsx-content
+            - name: home-dsx-content
+              mountPath: /home/ubuntu/dsx-content
+      volumes:
+        - name: dsx-bp
+          hostPath:
+            path: /home/ubuntu/DSX-BP
+            type: Directory
+        - name: ov-local-share
+          hostPath:
+            path: /home/ubuntu/.local/share/ov
+            type: Directory
+        - name: packman-cache
+          hostPath:
+            path: /home/ubuntu/.cache/packman
+            type: Directory
+        - name: dsx-content
+          hostPath:
+            path: /mnt/data/dsx-content
+            type: Directory
+        - name: home-dsx-content
+          hostPath:
+            path: /home/ubuntu/dsx-content
+            type: Directory
